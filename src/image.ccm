@@ -1,0 +1,84 @@
+//
+// Created by Ninter6 on 2026/5/9.
+//
+
+module;
+
+#include <cassert>
+#include <vector>
+#include <ranges>
+#include <fstream>
+
+export module image;
+
+import math;
+
+namespace cu {
+
+export template <class T, std::size_t Channels>
+struct Image {
+    using pixel_type = m3::vec<T, Channels>;
+
+    std::size_t width;
+    std::size_t height;
+    std::vector<pixel_type> data;
+
+    Image(std::size_t width, std::size_t height) :
+        width(width), height(height), data(width * height) {}
+
+    pixel_type& operator[](std::size_t x, std::size_t y) {
+        return at(x, y);
+    }
+
+    const pixel_type& operator[](std::size_t x, std::size_t y) const {
+        return at(x, y);
+    }
+
+    pixel_type& at(std::size_t x, std::size_t y) {
+        assert(x < width && y < height);
+        return data[y * width + x];
+    }
+
+    const pixel_type& at(std::size_t x, std::size_t y) const {
+        assert(x < width && y < height);
+        return data[y * width + x];
+    }
+
+    bool set_or_ignore(std::size_t x, std::size_t y, const pixel_type& val) {
+        if (x < width && y < height)
+            return data[y * width + x] = val, true;
+        return false;
+    }
+
+    auto view() {
+        return data | std::views::enumerate | std::views::transform([w=width](auto&& a) {
+            auto&& [i, p] = a;
+            return std::tuple<pixel_type&, std::size_t, std::size_t>(p, i % w, i / w);
+        });
+    }
+
+    auto view() const {
+        return data | std::views::enumerate | std::views::transform([w=width](auto&& a) {
+            auto&& [i, p] = a;
+            return std::tuple<const pixel_type&, std::size_t, std::size_t>(p, i % w, i / w);
+        });
+    }
+
+};
+
+export using ImageRGB = Image<float, 3>;
+export using ImageRGBA = Image<float, 4>;
+
+export template <class T, std::size_t Channels>
+void export_ppm(const Image<T, Channels>& img, std::string_view fn) {
+    std::ofstream out(fn.data(), std::ios::binary);
+    out << "P6\n" << img.width << ' ' << img.height << "\n255\n";
+
+    std::ranges::copy(img.data
+        | std::views::transform([](auto&& i) { return m3::vec3(i); })
+        | std::views::join | std::views::transform([](auto c) {
+            return static_cast<uint8_t>(c*255.f);
+        }), std::ostreambuf_iterator{out});
+}
+
+}

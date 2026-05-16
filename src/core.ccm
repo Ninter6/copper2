@@ -1,0 +1,187 @@
+//
+// Created by Ninter6 on 2026/5/9.
+//
+
+module;
+
+#include <span>
+#include <ranges>
+#include <vector>
+#include <cassert>
+#include <unordered_map>
+
+export module core;
+
+export import math;
+
+namespace cu {
+
+using namespace m3;
+
+export template <class T>
+struct regress_trait;
+
+template <class Sca, class T>
+concept same_scalar = std::same_as<Sca, typename regress_trait<std::decay_t<T>>::scalar_type>;
+
+export template <class Key, class Sca>
+struct storage {
+    using key_type = Key;
+    using scalar_type = Sca;
+
+    struct meta_data {
+        std::size_t begin;
+        std::size_t size;
+    };
+
+    using meta_map = std::unordered_map<key_type, meta_data>;
+    using regress_vec = std::vector<scalar_type>;
+
+    meta_map meta;
+    regress_vec reg;
+
+    bool contains(const key_type& k) const {
+        return meta.contains(k);
+    }
+
+    template <class T>
+    requires same_scalar<scalar_type, T>
+    bool emplace(const key_type& k, T&& a) {
+        auto [it, suc] = meta.try_emplace(k);
+        if (!suc) return false;
+
+        using rt = regress_trait<std::decay_t<T>>;
+        auto sp = rt::to_span(std::forward<T>(a));
+
+        meta_data& m = it->second;
+        m.begin = reg.size();
+        m.size = sp.size();
+
+        std::ranges::copy(sp, std::back_inserter(reg));
+
+        return true;
+    }
+
+    template <class T>
+    requires same_scalar<scalar_type, T>
+    void replace(const key_type& k, T&& a) {
+        using rt = regress_trait<std::decay_t<T>>;
+        auto sp = rt::to_span(std::forward<T>(a));
+
+        auto& m = meta.at(k);
+        assert(sp.size() == m.size);
+        std::ranges::copy(sp, reg.begin() + m.begin);
+    }
+
+    template <class T>
+    requires same_scalar<scalar_type, T>
+    void emplace_or_replace(const key_type& k, T&& a) {
+        using rt = regress_trait<std::decay_t<T>>;
+        auto sp = rt::to_span(std::forward<T>(a));
+
+        auto [it, suc] = meta.try_emplace(k);
+
+        meta_data& m = it->second;
+
+        if (!suc) {
+            assert(sp.size() == m.size);
+            std::copy(sp.begin(), sp.end(), reg.begin() + m.begin);
+            return;
+        }
+
+        m.begin = reg.size();
+        m.size = sp.size();
+
+        std::ranges::copy(sp, std::back_inserter(reg));
+    }
+
+    bool reserve(const key_type& k, std::size_t len) {
+        auto [it, suc] = meta.try_emplace(k);
+        if (!suc) return false;
+
+        meta_data& m = it->second;
+        m.begin = reg.size();
+        m.size = len;
+
+        reg.resize(reg.size() + len);
+
+        return true;
+    }
+
+    template <class T>
+    requires same_scalar<scalar_type, T>
+    auto get(const key_type& k) {
+        using rt = regress_trait<std::decay_t<T>>;
+
+        auto& m = meta.at(k);
+        std::span<scalar_type> sp{reg.begin() + m.begin, m.size};
+
+        return rt::from_span(sp);
+    }
+
+};
+
+template <class T, std::size_t N>
+struct regress_trait<vec<T, N>> {
+    using scalar_type = T;
+    using vector_type = vec<T, N>;
+
+    static std::span<const T> to_span(const vector_type& a) {
+        return a.as_array;
+    }
+    static auto to_span(vector_type&& a) {
+        return a.as_array | std::views::as_rvalue;
+    }
+
+    static vector_type from_span(std::span<const T> sp) {
+        assert(sp.size() == N);
+        vector_type v;
+        std::ranges::copy(sp, v.as_array);
+        return v;
+    }
+
+};
+
+template <class T, std::size_t W, std::size_t H>
+struct regress_trait<mat<T, W, H>> {
+    using scalar_type = T;
+    using vector_type = mat<T, W, H>;
+
+    static std::span<const T> to_span(const vector_type& a) {
+        return {a.value_ptr(), W*H};
+    }
+    static auto to_span(vector_type&& a) {
+        return std::span<T, W*H>{a.value_ptr()} | std::views::as_rvalue;
+    }
+
+    static vector_type from_span(std::span<const T> sp) {
+        assert(sp.size() == W*H);
+        vector_type v;
+        std::ranges::copy(sp, v.value_ptr());
+        return v;
+    }
+
+};
+
+template <class T>
+struct regress_trait<qua<T>> {
+    using scalar_type = T;
+    using vector_type = qua<T>;
+
+    static std::span<const T> to_span(const vector_type& a) {
+        return a.as_array;
+    }
+    static auto to_span(vector_type&& a) {
+        return a.as_array | std::views::as_rvalue;
+    }
+
+    static vector_type from_span(std::span<const T> sp) {
+        assert(sp.size() == 4);
+        vector_type v;
+        std::ranges::copy(sp, v.as_array);
+        return v;
+    }
+
+};
+
+}

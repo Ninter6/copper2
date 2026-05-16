@@ -1,0 +1,1552 @@
+//
+// Created by Ninter6 on 2026/3/24.
+//
+
+#ifndef M3_INC
+module;
+#define M3_EXPORT export
+#else
+#define M3_EXPORT
+#endif
+
+#include <cmath>
+#include <tuple>
+#include <random>
+#include <cassert>
+#include <numeric>
+#include <concepts>
+#include <algorithm>
+
+#ifndef M3_INC
+export module m3;
+#endif
+
+namespace m3 {
+
+M3_EXPORT template <std::floating_point T = float>
+constexpr T pi = 3.14159265358979323846264338327950288;
+M3_EXPORT template <std::floating_point T = float>
+constexpr T e = 2.71828182845904523536028747135266250;
+
+M3_EXPORT using std::min;
+M3_EXPORT using std::max;
+M3_EXPORT using std::abs;
+M3_EXPORT using std::sqrt;
+M3_EXPORT using std::pow;
+M3_EXPORT using std::sin;
+M3_EXPORT using std::cos;
+M3_EXPORT using std::tan;
+M3_EXPORT using std::asin;
+M3_EXPORT using std::acos;
+M3_EXPORT using std::atan;
+M3_EXPORT using std::atan2;
+M3_EXPORT using std::hypot;
+M3_EXPORT using std::exp;
+M3_EXPORT using std::log;
+M3_EXPORT using std::floor;
+M3_EXPORT using std::ceil;
+M3_EXPORT using std::round;
+M3_EXPORT using std::clamp;
+M3_EXPORT using std::copysign;
+
+// /**
+//  * \brief find the second largest number
+//  * \return the second largest number
+//  */
+// [[nodiscard]] constexpr auto mid(auto&& a, auto&& b, auto&& c)
+// requires requires { a < b; a < c; b < c; } {
+//     auto t = b < c;
+//     auto&& d = t ? b : c, e = t ? c : b;
+//     return a < d ? d : a < e ? a : e;
+// }
+
+M3_EXPORT template <class T, class R = decltype(tan(std::declval<T>()))>
+constexpr R cot(T a) { return R(1) / tan(a); }
+
+M3_EXPORT constexpr auto fract(std::floating_point auto a) {
+    return a - floor(a);
+}
+
+M3_EXPORT template <std::floating_point T>
+[[nodiscard]] constexpr T radians(T angle) noexcept {
+    return angle / T(180) * pi<T>;
+}
+
+// [[nodiscard]] constexpr auto cos_fast(std::floating_point auto x) noexcept {
+//     auto x2 = x*x*-0.452899011144226061510511300114222105;
+//     auto x4 = x2*x2*0.127930899786060046801234567890123457;
+//     return x4 + x2 + 0.978269900236110101102225311042110220;
+// }
+
+template <class T, std::size_t N>
+struct basic_vec {
+    T as_array[N]{};
+
+    constexpr auto operator<=>(const basic_vec& rhs) const = default;
+};
+
+template <class T>
+struct basic_vec<T, 1> {
+    union {
+        struct { T x; };
+        struct { T r; };
+        struct { T i; };
+        T as_array[1]{};
+    };
+
+    constexpr auto operator<=>(const basic_vec& rhs) const { return x <=> rhs.x; }
+};
+
+template <class T>
+struct basic_vec<T, 2> {
+    union {
+        struct { T x, y; };
+        struct { T r, g; };
+        struct { T i, j; };
+        T as_array[2]{};
+    };
+
+    constexpr auto operator<=>(const basic_vec& rhs) const {
+        auto t = x <=> rhs.x;
+        return t != 0 ? t : y <=> rhs.y;
+    }
+};
+
+template <class T>
+struct basic_vec<T, 3> {
+    union {
+        struct { T x, y, z; };
+        struct { T r, g, b; };
+        struct { T i, j, k; };
+        T as_array[3]{};
+    };
+
+    constexpr auto operator<=>(const basic_vec& rhs) const {
+        for (std::size_t i = 0; i < 3; ++i)
+            if (auto t = as_array[i] <=> rhs.as_array[i]; t != 0)
+                return t;
+        return std::partial_ordering::equivalent;
+    }
+};
+
+template <class T>
+struct basic_vec<T, 4> {
+    union {
+        struct { T x, y, z, w; };
+        struct { T r, g, b, a; };
+        struct { T i, j, k, l; };
+        T as_array[4]{};
+    };
+
+    constexpr auto operator<=>(const basic_vec& rhs) const {
+        for (std::size_t i = 0; i < 4; ++i)
+            if (auto t = as_array[i] <=> rhs.as_array[i]; t != 0)
+                return t;
+        return std::partial_ordering::equivalent;
+    }
+};
+
+M3_EXPORT template <class T, std::size_t N>
+struct vec : basic_vec<T, N> {
+    using value_type = T;
+
+    constexpr vec() = default;
+    constexpr vec(std::common_with<T> auto&& ... args)
+    requires (1 < sizeof...(args) && sizeof...(args) <= N) {
+        [&]<std::size_t... I>(std::index_sequence<I...>) {
+            (((*this)[I] = std::forward<decltype(args)>(args)), ...);
+        }(std::make_index_sequence<sizeof...(args)>{});
+    }
+    constexpr explicit vec(std::common_with<T> auto&& a) {
+        std::fill_n(begin(), N, std::forward<decltype(a)>(a));
+    }
+    template <std::common_with<T> U, std::size_t M, std::common_with<T>... Args>
+    constexpr explicit vec(const vec<U, M>& u, Args&&... args)
+    requires (sizeof...(Args) == 0) || (M + sizeof...(Args) <= N) {
+        std::copy_n(u.begin(), min(M, N), begin());
+        if constexpr (sizeof...(Args)) {
+            [&]<std::size_t... I>(std::index_sequence<I...>) {
+                (((*this)[M + I] = std::forward<Args>(args)), ...);
+            }(std::index_sequence_for<Args...>{});
+        }
+    }
+
+    constexpr auto size() const { return N; }
+
+    constexpr T& operator[](std::size_t i) { assert(i < N); return (*this).as_array[i]; }
+    constexpr const T& operator[](std::size_t i) const { assert(i < N); return (*this).as_array[i]; }
+
+    constexpr auto value_ptr() { return (*this).as_array; }
+    constexpr auto value_ptr() const { return (*this).as_array; }
+
+    constexpr auto begin() { return (*this).as_array; }
+    constexpr auto end() { return (*this).as_array + size(); }
+    constexpr auto cbegin() const { return (*this).as_array; }
+    constexpr auto cend() const { return (*this).as_array + size(); }
+    constexpr auto begin() const { return cbegin(); }
+    constexpr auto end() const { return cend(); }
+
+    using basic_vec<T, N>::operator<=>;
+    constexpr bool operator==(const vec& o) const {
+        for (std::size_t i = 0; i < N; ++i)
+            if ((*this)[i] != o[i])
+                return false;
+        return true;
+    }
+
+    [[nodiscard]] constexpr bool is_unit() const {
+        return abs(length() - T(1)) <= std::numeric_limits<T>::epsilon();
+    }
+
+    constexpr T sum() const {
+        return std::accumulate(begin(), end(), T{});
+    }
+    constexpr T length_squared() const {
+        return std::transform_reduce(begin(), end(), T{},
+            std::plus{}, [](auto&& i) {return i*i;});
+    }
+    constexpr T length() const { return sqrt(length_squared()); }
+
+    constexpr void normalize() { (*this) /= length(); }
+    constexpr auto normalized() const { return (*this) / length(); }
+
+    constexpr void renorm(const T& n) { (*this) *= n / length(); }
+
+    template<size_t I>
+    decltype(auto) get() & { return (*this)[I]; }
+    template<size_t I>
+    decltype(auto) get() const& { return (*this)[I]; }
+    template<size_t I>
+    decltype(auto) get() && { return std::move((*this)[I]); }
+
+};
+
+template <class T, class... Args>
+requires (sizeof...(Args) > 0) && (std::common_with<T, Args> && ...)
+vec(T, Args...) -> vec<T, 1 + sizeof...(Args)>;
+
+template <class T, std::size_t N, class... Args>
+requires (std::common_with<T, Args> && ...)
+vec(vec<T, N>, Args...) -> vec<T, N + sizeof...(Args)>;
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto operator+(const vec<T, N>& v) {
+    return v;
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto operator-(const vec<T, N>& v) {
+    auto r = v;
+    for (auto& i : r) i = -i;
+    return r;
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto& operator+=(vec<T, N>& lhs, const vec<T, N>& rhs) {
+    for (std::size_t i = 0; i < N; ++i)
+        lhs[i] += rhs[i];
+    return lhs;
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto operator+(const vec<T, N>& lhs, const vec<T, N>& rhs) {
+    auto r = lhs;
+    return r += rhs;
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto& operator-=(vec<T, N>& lhs, const vec<T, N>& rhs) {
+    for (std::size_t i = 0; i < N; ++i)
+        lhs[i] -= rhs[i];
+    return lhs;
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto operator-(const vec<T, N>& lhs, const vec<T, N>& rhs) {
+    auto r = lhs;
+    return r -= rhs;
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto& operator+=(vec<T, N>& lhs, std::common_with<T> auto&& rhs) {
+    for (std::size_t i = 0; i < N; ++i)
+        lhs[i] += rhs;
+    return lhs;
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto operator+(const vec<T, N>& lhs, std::common_with<T> auto&& rhs) {
+    auto r = lhs;
+    return r += rhs;
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto& operator-=(vec<T, N>& lhs, std::common_with<T> auto&& rhs) {
+    return lhs += -rhs;
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto operator-(const vec<T, N>& lhs, std::common_with<T> auto&& rhs) {
+    return lhs + -rhs;
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto& operator*=(vec<T, N>& lhs, std::common_with<T> auto&& rhs) {
+    for (std::size_t i = 0; i < N; ++i)
+        lhs[i] *= rhs;
+    return lhs;
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto operator*(const vec<T, N>& lhs, std::common_with<T> auto&& rhs) {
+    auto r = lhs;
+    return r *= rhs;
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto operator*(std::common_with<T> auto&& lhs, const vec<T, N>& rhs) {
+    return rhs * std::forward<decltype(lhs)>(lhs);
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto& operator/=(vec<T, N>& lhs, std::common_with<T> auto&& rhs) {
+    return lhs *= T(1) / rhs;
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto operator/(const vec<T, N>& lhs, std::common_with<T> auto&& rhs) {
+    auto r = lhs;
+    return r /= rhs;
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto operator/(std::common_with<T> auto&& lhs, const vec<T, N>& rhs) {
+    return vec<T, N>{lhs} / rhs;
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr bool is_unit(const vec<T, N>& v) {
+    return v.is_unit();
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr T sum(const vec<T, N>& v) {
+    return std::accumulate(v.begin(), v.end(), T{});
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr T length_squared(const vec<T, N>& v) {
+    return v.length_squared();
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr T length(const vec<T, N>& v) {
+    return v.length();
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto normalize(const vec<T, N>& v) {
+    return v.normalized();
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto norm(const vec<T, N>& v) {
+    return v.length();
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto renorm(vec<T, N> v, const T& n) {
+    return v.renorm(n), v;
+}
+
+// normal vec type
+M3_EXPORT using vec1 = vec<float, 1>;
+M3_EXPORT using vec2 = vec<float, 2>;
+M3_EXPORT using vec3 = vec<float, 3>;
+M3_EXPORT using vec4 = vec<float, 4>;
+
+M3_EXPORT using dvec1 = vec<double, 1>;
+M3_EXPORT using dvec2 = vec<double, 2>;
+M3_EXPORT using dvec3 = vec<double, 3>;
+M3_EXPORT using dvec4 = vec<double, 4>;
+
+M3_EXPORT using ivec1 = vec<int, 1>;
+M3_EXPORT using ivec2 = vec<int, 2>;
+M3_EXPORT using ivec3 = vec<int, 3>;
+M3_EXPORT using ivec4 = vec<int, 4>;
+
+M3_EXPORT using uvec1 = vec<unsigned, 1>;
+M3_EXPORT using uvec2 = vec<unsigned, 2>;
+M3_EXPORT using uvec3 = vec<unsigned, 3>;
+M3_EXPORT using uvec4 = vec<unsigned, 4>;
+
+M3_EXPORT template <class Tp, std::size_t W, std::size_t H>
+struct mat {
+    using value_type = Tp;
+    using column_type = vec<Tp, H>;
+    using transposed_type = mat<Tp, H, W>;
+
+    column_type columns[W];
+
+    constexpr explicit mat(const Tp& x = Tp(1)) {
+        for (std::size_t i = 0; i < min(W, H); ++i)
+            columns[i][i] = x;
+    }
+    template <std::common_with<Tp> Up, std::size_t W1, std::size_t H1>
+    constexpr explicit mat(const mat<Up, W1, H1>& u) {
+        for (std::size_t i = 0; i < min(W, W1); ++i)
+            columns[i] = static_cast<column_type>(u[i]);
+    }
+
+    constexpr explicit mat(std::common_with<column_type> auto&& ... args) // column init
+    requires (0 < sizeof...(args) && sizeof...(args) <= W) {
+        [&]<std::size_t... I>(std::index_sequence<I...>) {
+            ((columns[I] = std::forward<decltype(args)>(args)), ...);
+        }(std::make_index_sequence<sizeof...(args)>{});
+    }
+    constexpr explicit mat(std::common_with<Tp> auto&&... args) // row init
+    requires (sizeof...(args) == W*H) {
+        auto loop_body = [this](std::size_t i, auto&& a) {
+            columns[i%W][i/W] = std::forward<decltype(a)>(a);
+        };
+        [&]<std::size_t... I>(std::index_sequence<I...>) {
+            ((loop_body(I, std::forward<decltype(args)>(args))), ...);
+        }(std::make_index_sequence<W*H>{});
+    }
+
+    constexpr static mat zero() { return mat(_zero_tag{}); }
+
+    constexpr auto value_ptr() { return columns->value_ptr(); }
+    constexpr auto value_ptr() const { return columns->value_ptr(); }
+
+    constexpr column_type& operator[](std::size_t w) { return columns[w]; }
+    constexpr const column_type& operator[](std::size_t w) const { return columns[w]; }
+
+    constexpr auto operator<=>(const mat&) const = default;
+
+    constexpr transposed_type transposed() const {
+        auto r = mat<Tp, H, W>::zero();
+        for(std::size_t i = 0; i < W; ++i)
+            for(std::size_t j = 0; j < H; ++j)
+                r[j][i] = columns[i][j];
+        return r;
+    }
+    constexpr transposed_type T() const { return transposed(); }
+
+    constexpr vec<Tp, (W < H ? W : H)> tr() const {
+        vec<Tp, (W < H ? W : H)> r;
+        for (std::size_t i = 0; i < r.size(); ++i)
+            r[i] = columns[i][i];
+        return r;
+    }
+
+    constexpr std::size_t     size()      const   {   return W;                   }
+    constexpr auto            begin()             {   return columns;             }
+    constexpr auto            end()               {   return columns + size();    }
+    constexpr auto            cbegin()    const   {   return columns;             }
+    constexpr auto            cend()      const   {   return columns + size();    }
+    constexpr auto            begin()     const   {   return cbegin();            }
+    constexpr auto            end()       const   {   return cend();              }
+
+private:
+    struct _zero_tag {};
+    constexpr mat(_zero_tag) {}
+
+};
+
+M3_EXPORT template <class Tp, class... Us, size_t H>
+requires (std::same_as<Tp, Us> && ...)
+mat(vec<Tp, H>, vec<Us, H> ...) -> mat<Tp, 1 + sizeof...(Us), H>;
+
+M3_EXPORT template <class Tp, std::size_t W, std::size_t H>
+auto operator+(const mat<Tp, W, H>& m) { return m; }
+
+M3_EXPORT template <class Tp, std::size_t W, std::size_t H>
+auto operator-(const mat<Tp, W, H>& m) {
+    auto r = m;
+    for (auto&& i : r) i = -i;
+    return r;
+}
+
+M3_EXPORT template <class Tp, std::size_t W, std::size_t H>
+mat<Tp, W, H>& operator+=(mat<Tp, W, H>& lhs, const mat<Tp, W, H>& rhs) {
+    for (std::size_t i = 0; i < W; ++i)
+        lhs[i] += rhs[i];
+    return lhs;
+}
+
+M3_EXPORT template <class Tp, std::size_t W, std::size_t H>
+mat<Tp, W, H> operator+(const mat<Tp, W, H>& lhs, const mat<Tp, W, H>& rhs) {
+    auto t = lhs;
+    return t += rhs;
+}
+
+M3_EXPORT template <class Tp, std::size_t W, std::size_t H>
+mat<Tp, W, H>& operator-=(mat<Tp, W, H>& lhs, const mat<Tp, W, H>& rhs) {
+    for (std::size_t i = 0; i < W; ++i)
+        lhs[i] -= rhs[i];
+    return lhs;
+}
+
+M3_EXPORT template <class Tp, std::size_t W, std::size_t H>
+mat<Tp, W, H> operator-(const mat<Tp, W, H>& lhs, const mat<Tp, W, H>& rhs) {
+    auto t = lhs;
+    return t -= rhs;
+}
+
+M3_EXPORT template <class Tp, std::size_t W, std::size_t H>
+mat<Tp, W, H>& operator*=(mat<Tp, W, H>& lhs, std::common_with<Tp> auto&& rhs) {
+    for (std::size_t i = 0; i < W; ++i)
+        lhs[i] *= rhs;
+    return lhs;
+}
+
+M3_EXPORT template <class Tp, std::size_t W, std::size_t H>
+mat<Tp, W, H> operator*(const mat<Tp, W, H>& lhs, std::common_with<Tp> auto&& rhs) {
+    auto t = lhs;
+    return t *= rhs;
+}
+
+M3_EXPORT template <class Tp, std::size_t W, std::size_t H>
+mat<Tp, W, H> operator*(std::common_with<Tp> auto&& lhs, const mat<Tp, W, H>& rhs) {
+    return rhs * std::forward<decltype(lhs)>(lhs);
+}
+
+M3_EXPORT template <class Tp, std::size_t W, std::size_t H>
+mat<Tp, W, H>& operator/=(mat<Tp, W, H>& lhs, std::common_with<Tp> auto&& rhs) {
+    return lhs *= (static_cast<decltype(rhs)>(1) / rhs);
+}
+
+M3_EXPORT template <class Tp, std::size_t W, std::size_t H>
+mat<Tp, W, H> operator/(const mat<Tp, W, H>& lhs, std::common_with<Tp> auto&& rhs) {
+    return lhs * (static_cast<decltype(rhs)>(1) / rhs);
+}
+
+M3_EXPORT template<class T, std::size_t H, std::size_t N>
+constexpr vec<T, H> operator*(const mat<T, N, H>& m, const vec<T, N>& v) {
+    vec<T, H> r{};
+    for (std::size_t i = 0; i < N; ++i)
+        r += m[i] * v[i];
+    return r;
+}
+
+M3_EXPORT template<class T, std::size_t W, std::size_t H, std::size_t M>
+constexpr mat<T, W, H> operator*(const mat<T, M, H>& m1, const mat<T, W, M>& m2) {
+    auto r = mat<T, W, H>::zero();
+    for (std::size_t i = 0; i < W; ++i)
+        r[i] = m1 * m2[i];
+    return r;
+}
+
+M3_EXPORT template <class Tp, std::size_t W, std::size_t H>
+constexpr auto transpose(const mat<Tp, W, H>& m) {
+    return m.T();
+}
+
+M3_EXPORT template <class Tp, std::size_t W, std::size_t H>
+constexpr mat<Tp, W-1, H-1> cofactor(const mat<Tp, W, H>& m, std::size_t x, std::size_t y) {
+    assert(x < W && y < H);
+    auto r = mat<Tp, W-1, H-1>::zero();
+    for(std::size_t i = 0, rx = 0; i < W; ++i) {
+        if(i == x) continue;
+        for(std::size_t j = 0, ry = 0; j < H; ++j) {
+            if(j == y) continue;
+            r[rx][ry++] = m[i][j];
+        }
+        ++rx;
+    }
+    return r;
+}
+
+M3_EXPORT template <class Tp, std::size_t W, std::size_t H>
+constexpr Tp trace(const mat<Tp, W, H>& m) {
+    return m.tr().sum();
+}
+
+// normal mat type
+M3_EXPORT using mat2 = mat<float, 2, 2>;
+M3_EXPORT using mat3 = mat<float, 3, 3>;
+M3_EXPORT using mat4 = mat<float, 4, 4>;
+
+M3_EXPORT using dmat2 = mat<double, 2, 2>;
+M3_EXPORT using dmat3 = mat<double, 3, 3>;
+M3_EXPORT using dmat4 = mat<double, 4, 4>;
+
+M3_EXPORT template <class T = float>
+struct euler { T arr[3]{}; };
+
+M3_EXPORT enum class euler_seq {
+    //Tait-Bryan Angle
+    xyz, xzy, yxz, yzx, zxy, zyx,
+    //Proper Euler Angle
+    xyx, yxy, xzx, zxz, yzy, zyz
+};
+
+M3_EXPORT template <class T>
+struct qua {
+    union {
+        struct { T w, x, y, z; };
+        struct { T l, i, j, k; };
+        T as_array[4]{1, 0, 0, 0};
+    };
+
+    constexpr qua() = default;
+    constexpr qua(T w, T x, T y, T z)
+        : w(w), x(x), y(y), z(z) {}
+
+    constexpr static qua unit() { return {T(1), T(0), T(0), T(0)}; }
+
+    constexpr static qua from_euler(const euler<T>& e, euler_seq seq);
+    constexpr static qua from_rot_vec(const vec<T, 3>& v);
+    constexpr static qua from_rotation(const vec<T, 3>& axis, T angle);
+
+    explicit operator vec<T, 4>() const { return vec<T, 4>{x, y, z, w}; }
+
+    [[nodiscard]] constexpr std::size_t size() const { return 4; }
+
+    constexpr T& operator[](std::size_t i) { return as_array[i]; }
+    constexpr const T& operator[](std::size_t i) const {return as_array[i];}
+
+    constexpr auto begin() { return as_array; }
+    constexpr auto end() { return as_array + size(); }
+    constexpr auto cbegin() const { return as_array; }
+    constexpr auto cend() const { return as_array + size(); }
+    constexpr auto begin() const { return cbegin(); }
+    constexpr auto end() const { return cend(); }
+
+    constexpr bool operator==(const qua& o) const {
+        return w==o.w && x==o.x && y==o.y && z==o.z;
+    }
+
+    [[nodiscard]] constexpr bool is_unit() const {
+        return abs(length() - T(1)) <= std::numeric_limits<T>::epsilon();
+    }
+
+    constexpr auto ln() const {
+        assert(is_unit());
+        vec<T, 3> r{x, y, z};
+        if (auto l = r.length(); l > std::numeric_limits<T>::epsilon())
+            return r / l * atan2(l, w);
+        return r;
+    }
+    constexpr vec<T, 3> to_rot_vec() const {
+        return ln() * T(2);
+    }
+
+    constexpr T length_squared() const { return w*w + x*x + y*y + z*z; }
+    constexpr T length() const { return sqrt(length_squared()); }
+    constexpr void normalize() { *this /= length(); }
+    constexpr qua normalized() const { return *this / length(); }
+    constexpr qua conjugate() const { return {w, -x, -y, -z}; }
+    constexpr qua inverse() const { return conjugate() / length_squared(); }
+
+};
+
+M3_EXPORT template <class T>
+qua<T> operator+(const qua<T>& q) { return q; }
+
+M3_EXPORT template <class T>
+qua<T> operator-(const qua<T>& q) {
+    return { -q.w, -q.x, -q.y, -q.z };
+}
+
+M3_EXPORT template <class T>
+qua<T>& operator+=(qua<T>& lhs, const qua<T>& rhs) {
+    for (std::size_t i = 0; i < 4; ++i)
+        lhs[i] += rhs[i];
+    return lhs;
+}
+
+M3_EXPORT template <class T>
+qua<T> operator+(qua<T> lhs, const qua<T>& rhs) {
+    return lhs += rhs;
+}
+
+M3_EXPORT template <class T>
+qua<T>& operator-=(qua<T>& lhs, const qua<T>& rhs) {
+    for (std::size_t i = 0; i < 4; ++i)
+        lhs[i] -= rhs[i];
+    return lhs;
+}
+
+M3_EXPORT template <class T>
+qua<T> operator-(qua<T> lhs, const qua<T>& rhs) {
+    return lhs -= rhs;
+}
+
+M3_EXPORT template <class T>
+qua<T>& operator+=(qua<T>& lhs, std::common_with<T> auto&& rhs) {
+    for (std::size_t i = 0; i < 4; ++i)
+        lhs[i] += rhs;
+    return lhs;
+}
+
+M3_EXPORT template <class T>
+qua<T> operator+(qua<T> lhs, std::common_with<T> auto&& rhs) {
+    return lhs += rhs;
+}
+
+M3_EXPORT template <class T>
+qua<T>& operator-=(qua<T>& lhs, std::common_with<T> auto&& rhs) {
+    for (std::size_t i = 0; i < 4; ++i)
+        lhs[i] -= rhs;
+    return lhs;
+}
+
+M3_EXPORT template <class T>
+qua<T> operator-(qua<T> lhs, std::common_with<T> auto&& rhs) {
+    return lhs -= rhs;
+}
+
+M3_EXPORT template <class T>
+qua<T>& operator*=(qua<T>& lhs, std::common_with<T> auto&& rhs) {
+    for (std::size_t i = 0; i < 4; ++i)
+        lhs[i] *= rhs;
+    return lhs;
+}
+
+M3_EXPORT template <class T>
+qua<T> operator*(qua<T> lhs, std::common_with<T> auto&& rhs) {
+    return lhs *= rhs;
+}
+
+M3_EXPORT template <class T>
+qua<T> operator*(std::common_with<T> auto&& lhs, const qua<T>& rhs) {
+    return rhs * std::forward<decltype(lhs)>(lhs);
+}
+
+M3_EXPORT template <class T>
+qua<T>& operator/=(qua<T>& lhs, std::common_with<T> auto&& rhs) {
+    for (std::size_t i = 0; i < 4; ++i)
+        lhs[i] /= rhs;
+    return lhs;
+}
+
+M3_EXPORT template <class T>
+qua<T> operator/(qua<T> lhs, std::common_with<T> auto&& rhs) {
+    return lhs /= rhs;
+}
+
+M3_EXPORT template <class T>
+qua<T> operator/(std::common_with<T> auto&& lhs, const qua<T>& rhs) {
+    return lhs * rhs.inverse();
+}
+
+M3_EXPORT template <class T>
+qua<T> operator*(const qua<T>& lhs, const qua<T>& rhs) {
+    auto&& [w, x, y, z] = lhs.as_array;
+    auto&& [a, b, c, d] = rhs.as_array;
+    return qua<T>{
+        w*a - x*b - y*c - z*d,
+        w*b + x*a + y*d - z*c,
+        w*c - x*d + y*a + z*b,
+        w*d + x*c - y*b + z*a
+    };
+}
+
+M3_EXPORT template <class T>
+qua<T>& operator*=(qua<T>& lhs, const qua<T>& rhs) {
+    return lhs = lhs * rhs;
+}
+
+M3_EXPORT template <class T>
+qua<T>& operator/=(qua<T>& lhs, const qua<T>& rhs) {
+    return lhs *= rhs.inverse();
+}
+
+M3_EXPORT template <class T>
+qua<T> operator/(const qua<T>& lhs, const qua<T>& rhs) {
+    return lhs * rhs.inverse();
+}
+
+M3_EXPORT template <class T>
+constexpr bool is_unit(const qua<T>& q) {
+    return q.is_unit();
+}
+
+M3_EXPORT template <class T>
+constexpr vec<T, 3> operator*(const qua<T>& q, const vec<T, 3>& v) {
+    assert(is_unit(q));
+    qua p = {T(0), v.x, v.y, v.z};
+    qua r = q * p * q.conjugate();
+    return vec<T, 3>{r.x, r.y, r.z};
+}
+
+M3_EXPORT template <class T>
+constexpr T length_squared(const qua<T>& q) {
+    return q.length_squared();
+}
+
+M3_EXPORT template <class T>
+constexpr T length(const qua<T>& q) {
+    return q.length();
+}
+
+M3_EXPORT template <class T>
+constexpr auto normalize(const qua<T>& q) {
+    return q.normalized();
+}
+
+M3_EXPORT template <class T>
+constexpr auto ln(const qua<T>& q) {
+    return q.ln();
+}
+
+template <class T>
+constexpr qua<T> qua<T>::from_euler(const euler<T>& e, euler_seq seq) {
+    constexpr auto rotx= [](T a) { T h = a * T(.5); return qua{cos(h), sin(h), T(0), T(0)}; };
+    constexpr auto roty= [](T a) { T h = a * T(.5); return qua{cos(h), T(0), sin(h), T(0)}; };
+    constexpr auto rotz= [](T a) { T h = a * T(.5); return qua{cos(h), T(0), T(0), sin(h)}; };
+
+    qua r{};
+    auto&& [e1, e2, e3] = e.arr;
+    switch (seq) {
+        case euler_seq::xyz:
+            return rotx(e1) * roty(e2) * rotz(e3);
+        case euler_seq::xzy:
+            return rotx(e1) * rotz(e2) * roty(e3);
+        case euler_seq::yxz:
+            return roty(e1) * rotx(e2) * rotz(e3);
+        case euler_seq::yzx:
+            return roty(e1) * rotz(e2) * rotx(e3);
+        case euler_seq::zxy:
+            return rotz(e1) * rotx(e2) * roty(e3);
+        case euler_seq::zyx:
+            return rotz(e1) * roty(e2) * rotx(e3);
+        case euler_seq::xyx:
+            return rotx(e1) * roty(e2) * rotx(e3);
+        case euler_seq::yxy:
+            return roty(e1) * rotx(e2) * roty(e3);
+        case euler_seq::xzx:
+            return rotx(e1) * rotz(e2) * rotx(e3);
+        case euler_seq::zxz:
+            return rotz(e1) * rotx(e2) * rotz(e3);
+        case euler_seq::yzy:
+            return roty(e1) * rotz(e2) * roty(e3);
+        case euler_seq::zyz:
+            return rotz(e1) * roty(e2) * rotz(e3);
+        default:
+            return {};
+    }
+}
+
+template <class T>
+constexpr qua<T> qua<T>::from_rot_vec(const vec<T, 3>& v) {
+    auto angle = v.length();
+    if (angle <= std::numeric_limits<T>::epsilon())
+        return unit();
+    auto half = angle * T(.5);
+    auto&& [x, y, z] = (v * (sin(half) / angle)).as_array;
+    return {cos(half), x, y, z};
+}
+
+template <class T>
+constexpr qua<T> qua<T>::from_rotation(const vec<T, 3>& axis, T angle) {
+    return from_rot_vec(renorm(axis, angle));
+}
+
+// normal quat type
+M3_EXPORT using quat = qua<float>;
+
+// useful functions
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto clamp(vec<T, N> v, std::common_with<T> auto&& min, std::common_with<T> auto&& max) {
+    for (auto&& i : v) i = clamp<T>(i, min, max);
+    return v;
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto floor(vec<T, N> v) {
+    for (auto&& i : v) i = floor(i);
+    return v;
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto ceil(vec<T, N> v) {
+    for (auto&& i : v) i = ceil(i);
+    return v;
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto round(vec<T, N> v) {
+    for (auto&& i : v) i = round(i);
+    return v;
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr auto fract(vec<T, N> v) {
+    for (auto&& i : v) i = fract(i);
+    return v;
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr T distance(const vec<T, N>& v1, const vec<T, N>& v2) {
+    return (v1 - v2).length();
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr T distance_squared(const vec<T, N>& v1, const vec<T, N>& v2) {
+    return (v1 - v2).length_squared();
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr T dot(const vec<T, N>& v1, const vec<T, N>& v2) {
+    T r{};
+    for (std::size_t i = 0; i < N; ++i)
+        r += v1[i] * v2[i];
+    return r;
+}
+
+M3_EXPORT template <class T>
+constexpr vec<T, 3> cross(const vec<T, 3>& v1, const vec<T, 3>& v2){
+    auto&& [x, y, z] = v1;
+    auto&& [a, b, c] = v2;
+    return vec<T, 3>{y*c - z*b, z*a - x*c, x*b - y*a};
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr mat<T, N, N> outer_product(const vec<T, N>& a, const vec<T, N>& b) {
+    mat ma{ a }, mb{ b };
+    return ma * mb.T();
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr T angle(const vec<T, N>& v1, const vec<T, N>& v2){
+    return acos(dot(v1, v2) / v1.length() / v2.length());
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr vec<T, N> project(const vec<T, N>& src, const vec<T, N>& dst) {
+    return dst * (dot(src, dst) / dst.length_squared());
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr vec<T, N> reflect(const vec<T, N>& ori, const vec<T, N>& nor){
+    return ori - T(2) * project(ori, nor);
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr vec<T, N> perpendicular(const vec<T, N>& hyp, const vec<T, N>& adj) {
+    return hyp - project(hyp, adj);
+}
+
+template <class T, std::size_t N>
+struct determinant_fn {
+    T operator()(const mat<T, N, N>& m) const {
+        T r{};
+        for(std::size_t i = 0; i < N; ++i)
+            if (i%2)
+                r -= m[i][0] * determinant_fn<T, N-1>{}(cofactor(m, i, 0));
+            else
+                r += m[i][0] * determinant_fn<T, N-1>{}(cofactor(m, i, 0));
+        return r;
+    }
+};
+
+template <class T>
+struct determinant_fn<T, 2> {
+    T operator()(const mat<T, 2, 2>& m) const {
+        return m[0][0]*m[1][1] - m[0][1]*m[1][0];
+    }
+};
+template <class T>
+struct determinant_fn<T, 1> {
+    T operator()(const mat<T, 1, 1>& m) const {
+        return m[0][0];
+    }
+};
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr T determinant(const mat<T, N, N>& m) {
+    return determinant_fn<T, N>{}(m);
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr mat<T, N, N> adjugate(const mat<T, N, N>& m) {
+    auto r = mat<T, N, N>::zero();
+    for(std::size_t i = 0; i < N; ++i)
+        for(std::size_t j = 0; j < N; ++j)
+            r[j][i] = determinant(cofactor(m, i, j)) * T((i+j)&1 ? -1 : 1);
+    return r;
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr mat<T, N, N> inverse(const mat<T, N, N>& m) {
+    return adjugate<T, N>(m) / determinant<T, N>(m);
+}
+
+// transformation functions
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr mat<T, N+1, N+1> translate(const vec<T, N>& v) {
+    mat<T, N+1, N+1> m;
+    m[N] = vec<T, N+1>{v, T(1)};
+    return m;
+}
+
+M3_EXPORT template <class T>
+constexpr mat<T, 3, 3> rotate(T angle) {
+    auto r = mat<T, 3, 3>::zero();
+    r[0][0] = r[1][1] = cos(angle);
+    r[1][0]-= r[0][1] = sin(angle);
+    return r;
+}
+
+M3_EXPORT template<class T>
+constexpr mat<T, 4, 4> rotate(const qua<T>& q) {
+    assert(is_unit(q));
+    auto&& [a, b, c, d] = q.as_array;
+    return mat<T, 4, 4>{
+        vec<T, 4>{1 - 2*c*c - 2*d*d, 2*b*c + 2*a*d, 2*b*d - 2*a*c, 0},
+        vec<T, 4>{2*b*c - 2*a*d, 1 - 2*b*b - 2*d*d, 2*a*b + 2*c*d, 0},
+        vec<T, 4>{2*a*c + 2*b*d, 2*c*d - 2*a*b, 1 - 2*b*b - 2*c*c, 0},
+        vec<T, 4>{0, 0, 0, 1}
+    };
+}
+
+M3_EXPORT template <class T>
+constexpr mat<T, 4, 4> rotate(const vec<T, 3>& axis, const T& angle) {
+    return rotate(qua<T>::from_rotation(axis, angle));
+}
+
+M3_EXPORT template <class T>
+constexpr mat<T, 4, 4> rotate(const euler<T>& e, euler_seq seq) {
+    return rotate(qua<T>::from_euler(e, seq));
+}
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr mat<T, N+1, N+1> scale(const vec<T, N>& s) {
+    auto m = mat<T, N+1, N+1>::zero();
+    m[N][N] = T(1);
+    for (std::size_t i = 0; i < N; ++i)
+        m[i][i] = s[i];
+    return m;
+}
+
+M3_EXPORT template <class T>
+constexpr mat<T, 4, 4> look_in(const vec<T, 3>& eye, const vec<T, 3>& dir, const vec<T, 3>& up) {
+    vec<T, 3> d =-dir.normalized();
+    vec<T, 3> r = cross(up, d).normalized();
+    vec<T, 3> u = cross(d, r);
+    mat<T, 4, 4> m {
+        vec<T, 4>{r, -dot(r, eye)},
+        vec<T, 4>{u, -dot(u, eye)},
+        vec<T, 4>{d, -dot(d, eye)},
+        vec<T, 4>{0, 0, 0, 1}
+    };
+    return m.transposed();
+}
+
+M3_EXPORT template <class T>
+constexpr mat<T, 4, 4> look_at(const vec<T, 3>& eye, const vec<T, 3>& target, const vec<T, 3>& up) {
+    return look_in(eye, target - eye, up);
+}
+
+M3_EXPORT template <class T>
+constexpr mat<T, 4, 4> ortho(T l, T r, T b, T t) {
+    auto m = mat<T, 4, 4>::zero();
+    m[0][0] = T(2) / (r - l);
+    m[1][1] = T(2) / (t - b);
+    m[2][2] = T(-1);
+    m[3][0] = (l + r) / (l - r);
+    m[3][1] = (b + t) / (b - t);
+    m[3][3] = T(1);
+    return m;
+}
+
+M3_EXPORT template <class T>
+constexpr mat<T, 4, 4> ortho_d11(T l, T r, T b, T t, T n, T f) {
+    auto m = mat<T, 4, 4>::zero();
+    m[0][0] = T(2) / (r - l);
+    m[1][1] = T(2) / (t - b);
+    m[2][2] = T(2) / (n - f);
+    m[3] = vec<T, 4>{
+        (l + r) / (l - r),
+        (b + t) / (b - t),
+        (f + n) / (n - f),
+        T(1)
+    };
+    return m;
+}
+
+M3_EXPORT template <class T>
+constexpr mat<T, 4, 4> ortho_d01(T l, T r, T b, T t, T n, T f) {
+    auto m = mat<T, 4, 4>::zero();
+    m[0][0] = T(2) / (r - l);
+    m[1][1] = T(2) / (b - t);
+    m[2][2] = T(1) / (f - n);
+    m[3] = vec<T, 4>{
+        (l + r) / (l - r),
+        (b + t) / (t - b),
+        n / (n - f), T(1)
+    };
+    return m;
+}
+
+M3_EXPORT template <class T>
+constexpr mat<T, 4, 4> ortho(T l, T r, T b, T t, T n, T f) {
+#ifndef M3_DEPTH_0_1
+    return ortho_d11(l, r, b, t, n, f);
+#else
+    return ortho_d01(l, r, b, t, n, f);
+#endif
+}
+
+M3_EXPORT template <class T>
+constexpr mat<T, 4, 4> perspective_d11(T fov, T asp, T near) {
+    auto m = mat<T, 4, 4>::zero();
+    T a = cot(fov / T(2));
+    m[0][0] = a / asp;
+    m[1][1] = a;
+    m[2][2] = T(-1);
+    m[2][3] = T(-1);
+    m[3][2] = T(-2)*near;
+    return m;
+}
+
+M3_EXPORT template <class T>
+constexpr mat<T, 4, 4> perspective_d01(T fov, T asp, T near) {
+    auto m = mat<T, 4, 4>::zero();
+    T a = cot(fov / T(2));
+    m[0][0] = a / asp;
+    m[1][1] = a;
+    m[2][3] = T(1);
+    m[3][2] =-near;
+    return m;
+}
+
+M3_EXPORT template <class T>
+constexpr mat<T, 4, 4> perspective_d11(T fov, T asp, T near, T far) {
+    auto m = mat<T, 4, 4>::zero();
+    T a = cot(fov / T(2));
+    m[0][0] = a / asp;
+    m[1][1] = a;
+    m[2][2] = (far + near)  / (near - far);
+    m[3][2] = T(2)*far*near / (near - far);
+    m[2][3] = T(-1);
+    return m;
+}
+
+M3_EXPORT template <class T>
+constexpr mat<T, 4, 4> perspective_d01(T fov, T asp, T near, T far) {
+    auto m = mat<T, 4, 4>::zero();
+    T a = cot(fov / T(2));
+    m[0][0] = a / asp;
+    m[1][1] = a;
+    m[2][2] = far / (far - near);
+    m[3][2] = (far * near) / (near - far);
+    m[2][3] = T(1);
+    return m;
+}
+
+M3_EXPORT template <class T>
+constexpr mat<T, 4, 4> perspective(T fov, T asp, T near) {
+#ifndef M3_DEPTH_0_1
+    return perspective_d11(fov, asp, near);
+#else
+    return perspective_d01(fov, asp, near);
+#endif
+}
+
+M3_EXPORT template <class T>
+constexpr mat<T, 4, 4> perspective(T fov, T asp, T near, T far) {
+#ifndef M3_DEPTH_0_1
+    return perspective_d11(fov, asp, near, far);
+#else
+    return perspective_d01(fov, asp, near, far);
+#endif
+}
+
+M3_EXPORT template <class T>
+constexpr qua<T> nlerp(const qua<T>& a, const qua<T>& b, T t) {
+    return normalize(a * (T(1) - t) + b * t);
+}
+
+M3_EXPORT template <std::floating_point T>
+constexpr qua<T> slerp(const qua<T>& a, const qua<T>& b, T t) {
+    auto E = std::numeric_limits<T>::epsilon();
+    auto g = acos(dot(a, b));
+    if (g <= E) return a;
+    if (g >= pi<T> - E) return t < T(.5) ? a : b;
+    auto sg = sin(g);
+    return a * (sin(g*(T(1)-t))/sg) + b*(sin(g*t)/sg);
+}
+
+// algo
+
+/**
+ * \brief Returns the indice of a vector element arranged in descending order.
+ */
+M3_EXPORT template <class T, std::size_t N, std::invocable<T, T> Cmp = std::greater<>>
+constexpr vec<std::size_t, N> argsort(const vec<T, N>& v, Cmp&& cmp = {}) {
+    vec<std::size_t, N> r;
+    std::iota(r.begin(), r.end(), std::size_t{});
+    std::sort(r.begin(), r.end(), [&](auto a, auto b) {
+        return std::forward<Cmp>(cmp)(v[a], v[b]);
+    });
+    return r;
+}
+
+M3_EXPORT template <class T>
+constexpr auto quat_cast(const mat<T, 4, 4>& m) {
+    vec<T, 3> tr{m[0][0], m[1][1], m[2][2]};
+    qua<T> q;
+    if (auto s = tr.sum(); s > T(0)) {
+        s = sqrt(s + T(1)) * T(2);
+        q.w = s * T(.25);
+        q.x = (m[1][2] - m[2][1]) / s;
+        q.y = (m[2][0] - m[0][2]) / s;
+        q.z = (m[0][1] - m[1][0]) / s;
+    } else {
+        const auto i = argsort(tr)[0];
+        const auto j = (i + 1) % 3;
+        const auto k = (i + 2) % 3;
+        s = sqrt(m[i][i] - m[j][j] - m[k][k] + T(1)) * T(2);
+        q[i + 1] = T(0.25) * s;
+        q[0] = (m[j][k] - m[k][j]) / s;
+        q[j + 1] = (m[i][j] + m[j][i]) / s;
+        q[k + 1] = (m[i][k] + m[k][i]) / s;
+    }
+    return q;
+}
+
+M3_EXPORT template <class T>
+constexpr euler<T> euler_cast(const mat<T, 4, 4>& m, euler_seq seq) {
+    T a, b, c;
+    constexpr T eps = std::numeric_limits<T>::epsilon();
+
+    switch (seq) {
+        case euler_seq::xyz: {
+            const T sin_b = m[2][0];
+            const T cos_b_sq = m[0][0]*m[0][0] + m[1][0]*m[1][0];
+            if (cos_b_sq < eps) {
+                b = copysign(pi<T>/2, sin_b);
+                c = T(0);
+                a = atan2(m[0][1], m[1][1]);
+            } else {
+                const T cos_b = sqrt(cos_b_sq);
+                b = atan2(sin_b, cos_b);
+                a = atan2(-m[2][1], m[2][2]);
+                c = atan2(-m[1][0], m[0][0]);
+            }
+            break;
+        }
+        case euler_seq::xzy: {
+            const T sin_b = -m[1][0];
+            const T cos_b_sq = m[0][0]*m[0][0] + m[2][0]*m[2][0];
+            if (cos_b_sq < eps) {
+                b = copysign(pi<T>/2, sin_b);
+                c = T(0);
+                a = atan2(m[2][1], m[2][2]);
+            } else {
+                const T cos_b = sqrt(cos_b_sq);
+                b = atan2(sin_b, cos_b);
+                a = atan2(m[1][2], m[1][1]);
+                c = atan2(m[2][0], m[0][0]);
+            }
+            break;
+        }
+        case euler_seq::yxz: {
+            const T sin_b = -m[2][1];
+            const T cos_b_sq = m[0][1]*m[0][1] + m[1][1]*m[1][1];
+            if (cos_b_sq < eps) {
+                b = copysign(pi<T>/2, sin_b);
+                c = T(0);
+                a = atan2(-m[0][2], m[0][0]);
+            } else {
+                const T cos_b = sqrt(cos_b_sq);
+                b = atan2(sin_b, cos_b);
+                a = atan2(m[2][0], m[2][2]);
+                c = atan2(m[0][1], m[1][1]);
+            }
+            break;
+        }
+        case euler_seq::yzx: {
+            const T sin_b = m[0][1];
+            const T cos_b_sq = m[1][1]*m[1][1] + m[2][1]*m[2][1];
+            if (cos_b_sq < eps) {
+                b = copysign(pi<T>/2, sin_b);
+                c = T(0);
+                a = atan2(-m[2][0], m[2][2]);
+            } else {
+                const T cos_b = sqrt(cos_b_sq);
+                b = atan2(sin_b, cos_b);
+                a = atan2(-m[0][2], m[0][0]);
+                c = atan2(-m[2][1], m[1][1]);
+            }
+            break;
+        }
+        case euler_seq::zxy: {
+            const T sin_b = m[1][2];
+            const T cos_b_sq = m[0][2]*m[0][2] + m[2][2]*m[2][2];
+            if (cos_b_sq < eps) {
+                b = copysign(pi<T>/2, sin_b);
+                c = T(0);
+                a = atan2(m[0][1], m[0][0]);
+            } else {
+                const T cos_b = sqrt(cos_b_sq);
+                b = atan2(sin_b, cos_b);
+                a = atan2(-m[1][0], m[1][1]);
+                c = atan2(-m[0][2], m[2][2]);
+            }
+            break;
+        }
+        case euler_seq::zyx: {
+            const T sin_b = -m[0][2];
+            const T cos_b_sq = m[1][2]*m[1][2] + m[2][2]*m[2][2];
+            if (cos_b_sq < eps) {
+                b = copysign(pi<T>/2, sin_b);
+                c = T(0);
+                a = atan2(-m[1][0], m[1][1]);
+            } else {
+                const T cos_b = sqrt(cos_b_sq);
+                b = atan2(sin_b, cos_b);
+                a = atan2(m[0][1], m[0][0]);
+                c = atan2(m[1][2], m[2][2]);
+            }
+            break;
+        }
+        case euler_seq::xyx: {
+            const T cos_b = m[0][0];
+            const T sin_b_sq = m[1][0]*m[1][0] + m[2][0]*m[2][0];
+            if (sin_b_sq < eps) {
+                b = acos(clamp(cos_b, T(-1), T(1)));
+                c = T(0);
+                a = atan2(-m[1][2], m[1][1]);
+            } else {
+                const T sin_b = sqrt(sin_b_sq);
+                b = atan2(sin_b, cos_b);
+                a = atan2(m[1][0], -m[2][0]);
+                c = atan2(m[0][1], m[0][2]);
+            }
+            break;
+        }
+        case euler_seq::yxy: {
+            const T cos_b = m[1][1];
+            const T sin_b_sq = m[0][1]*m[0][1] + m[2][1]*m[2][1];
+            if (sin_b_sq < eps) {
+                b = acos(clamp(cos_b, T(-1), T(1)));
+                c = T(0);
+                a = atan2(m[0][2], m[0][0]);
+            } else {
+                const T sin_b = sqrt(sin_b_sq);
+                b = atan2(sin_b, cos_b);
+                a = atan2(m[0][1], m[2][1]);
+                c = atan2(m[1][0], -m[1][2]);
+            }
+            break;
+        }
+        case euler_seq::xzx: {
+            const T cos_b = m[0][0];
+            const T sin_b_sq = m[1][0]*m[1][0] + m[2][0]*m[2][0];
+            if (sin_b_sq < eps) {
+                b = acos(clamp(cos_b, T(-1), T(1)));
+                c = T(0);
+                a = atan2(m[2][1], m[2][2]);
+            } else {
+                const T sin_b = sqrt(sin_b_sq);
+                b = atan2(sin_b, cos_b);
+                a = atan2(m[2][0], m[1][0]);
+                c = atan2(m[0][2], -m[0][1]);
+            }
+            break;
+        }
+        case euler_seq::zxz: {
+            const T cos_b = m[2][2];
+            const T sin_b_sq = m[0][2]*m[0][2] + m[1][2]*m[1][2];
+            if (sin_b_sq < eps) {
+                b = acos(clamp(cos_b, T(-1), T(1)));
+                c = T(0);
+                a = atan2(m[0][1], m[0][0]);
+            } else {
+                const T sin_b = sqrt(sin_b_sq);
+                b = atan2(sin_b, cos_b);
+                a = atan2(m[0][2], -m[1][2]);
+                c = atan2(m[2][0], m[2][1]);
+            }
+            break;
+        }
+        case euler_seq::yzy: {
+            const T cos_b = m[1][1];
+            const T sin_b_sq = m[0][1]*m[0][1] + m[2][1]*m[2][1];
+            if (sin_b_sq < eps) {
+                b = acos(clamp(cos_b, T(-1), T(1)));
+                c = T(0);
+                a = atan2(m[2][0], m[2][2]);
+            } else {
+                const T sin_b = sqrt(sin_b_sq);
+                b = atan2(sin_b, cos_b);
+                a = atan2(m[2][1], m[0][1]);
+                c = atan2(m[1][2], -m[1][0]);
+            }
+            break;
+        }
+        case euler_seq::zyz: {
+            const T cos_b = m[2][2];
+            const T sin_b_sq = m[0][2]*m[0][2] + m[1][2]*m[1][2];
+            if (sin_b_sq < eps) {
+                b = acos(clamp(cos_b, T(-1), T(1)));
+                c = T(0);
+                a = atan2(-m[0][1], m[0][0]);
+            } else {
+                const T sin_b = sqrt(sin_b_sq);
+                b = atan2(sin_b, cos_b);
+                a = atan2(m[1][2], m[0][2]);
+                c = atan2(m[2][1], -m[2][0]);
+            }
+            break;
+        }
+        default: {
+            a = b = c = T(0);
+            break;
+        }
+    }
+    return {a, b, c};
+}
+
+M3_EXPORT template <class T>
+constexpr euler<T> quat_to_euler(const qua<T>& q, euler_seq seq) {
+    return euler_cast(rotate(q), seq);
+}
+
+M3_EXPORT template <class T, std::size_t N>
+struct eigen_result {
+    mat<T, N, N> vectors{};
+    vec<T, N> values{};
+    std::size_t rank{};
+};
+
+M3_EXPORT template <class T, std::size_t N>
+constexpr eigen_result<T, N> eigen(mat<T, N, N> A, T tol = 1e-8, std::size_t max_iter = 100) {
+    eigen_result<T, N> result{};
+    auto& [V, val, rank] = result;
+
+    while (max_iter--) {
+        std::size_t p = 1, q = 0;
+        for (std::size_t i = 2; i < N; ++i)
+            for (std::size_t j = 0; j < i; ++j) {
+                assert(!std::isnan(A[i][j]));
+                if (abs(A[i][j]) > abs(A[p][q]))
+                    p = i, q = j;
+            }
+
+        if (abs(A[p][q]) <= tol) break;
+
+        T App = A[p][p], Aqq = A[q][q];
+        T y = (Aqq - App) / A[p][q] * T(.5);
+        T t = hypot(T(1), y) - abs(y);
+        T s = (y > 0 ? T(-1) : T(1)) / hypot(T(1), t);
+        T c = t * abs(s);
+
+        A[p][p] = App*c*c + Aqq*s*s - T(2)*A[p][q]*s*c;
+        A[q][q] = App*s*s + Aqq*c*c + T(2)*A[p][q]*s*c;
+        A[p][q] = A[q][p] = 0;
+        for (std::size_t i = 0; i < N; ++i) {
+            if (i == p || i == q) continue;
+            auto Api = A[p][i], Aqi = A[q][i];
+            A[p][i] = A[i][p] = Api*c - Aqi*s;
+            A[q][i] = A[i][q] = Api*s + Aqi*c;
+        }
+
+        auto Vp = V[p], Vq = V[q];
+        V[p] = Vp*c - Vq*s;
+        V[q] = Vp*s + Vq*c;
+    }
+
+    auto v = A.tr(), U = V;
+    auto ord = argsort(v);
+    for (std::size_t i = 0; i < N; ++i) {
+        V[i] = U[ord[i]];
+        val[i] = v[ord[i]];
+    }
+
+    rank = std::distance(val.begin(),
+        std::lower_bound(val.begin(), val.end(), tol, std::greater{}));
+
+    return result;
+}
+
+M3_EXPORT template <class T, std::size_t W, std::size_t H>
+struct svd_result {
+    mat<T, H, H> U = mat<T, H, H>::zero();
+    mat<T, W, H> S = mat<T, W, H>::zero();
+    mat<T, W, W> V = mat<T, W, W>::zero();
+};
+
+M3_EXPORT template <class T, std::size_t W, std::size_t H>
+constexpr svd_result<T, W, H> svd(const mat<T, W, H>& A) {
+    svd_result<T, W, H> result;
+    auto& [U, S, V] = result;
+
+    const auto egn = eigen(A.T() * A);
+
+    auto inv_S = mat<T, H, W>::zero();
+    for(std::size_t i = 0; i < egn.rank; ++i) {
+        S[i][i] = sqrt(egn.values[i]);
+        inv_S[i][i] = T(1) / S[i][i];
+    }
+    V = egn.vectors;
+    U = A * V * inv_S;
+
+    return result;
+}
+
+M3_EXPORT template <class T, std::size_t W, std::size_t H>
+constexpr mat<T, H, W> inverse_svd(const mat<T, W, H>& A) {
+    const auto egn = eigen(A.T() * A);
+
+    auto VS = mat<T, W, H>::zero();
+    for(std::size_t i = 0; i < egn.rank; ++i)
+        VS[i] = egn.vectors[i] / sqrt(egn.values[i]);
+
+    return VS * VS.T() * A.T();
+}
+
+// random
+
+M3_EXPORT template <class T, std::size_t N>
+auto rand_unit_vec(std::uniform_random_bit_generator auto& e) {
+    std::uniform_real_distribution d(-pi<T>, pi<T>);
+
+    if constexpr (N == 1)
+        return vec<T, N>{d(e) > 0 ? T(1) : T(-1)};
+
+    vec<T, N> r{T(1)};
+    for (std::size_t i = 1; i < N; ++i) {
+        auto t = d(e);
+        auto s = sin(t);
+        for (std::size_t j = 0; j < i; ++j)
+            r[j] *= s;
+        r[i] *= cos(t);
+    }
+
+    return r;
+}
+
+template <class T, std::size_t N>
+struct rand_unit_vec_fn {
+    auto operator()(std::uniform_random_bit_generator auto& e) const {
+        return rand_unit_vec<T, N>(e);
+    }
+};
+
+M3_EXPORT constexpr rand_unit_vec_fn<float, 1> rand_unit_vec1{};
+M3_EXPORT constexpr rand_unit_vec_fn<float, 2> rand_unit_vec2{};
+M3_EXPORT constexpr rand_unit_vec_fn<float, 3> rand_unit_vec3{};
+M3_EXPORT constexpr rand_unit_vec_fn<float, 4> rand_unit_vec4{};
+
+M3_EXPORT constexpr rand_unit_vec_fn<double, 1> rand_unit_dvec1{};
+M3_EXPORT constexpr rand_unit_vec_fn<double, 2> rand_unit_dvec2{};
+M3_EXPORT constexpr rand_unit_vec_fn<double, 3> rand_unit_dvec3{};
+M3_EXPORT constexpr rand_unit_vec_fn<double, 4> rand_unit_dvec4{};
+
+}
+
+namespace std {
+template <class T, std::size_t N>
+struct tuple_size<m3::vec<T, N>> : integral_constant<std::size_t, N> {};
+
+template<std::size_t I, class T, std::size_t N>
+struct tuple_element<I, m3::vec<T, N>> { using type = T; };
+}

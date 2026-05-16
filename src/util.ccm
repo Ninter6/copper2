@@ -1,0 +1,99 @@
+//
+// Created by Ninter6 on 2026/5/14.
+//
+
+module;
+
+#include <ranges>
+#include <concepts>
+
+export module util;
+
+namespace cu::util {
+
+export template<std::copyable T, std::copyable F>
+    requires std::invocable<F&, const T&>
+class iterate_view;
+
+template<std::copyable T, std::copyable F>
+class iterate_view_iterator {
+    // 允许 view 访问私有构造函数
+    friend class iterate_view<T, F>;
+
+    T current_;          // 当前值
+    F func_;             // 递推函数 (T -> T)
+
+    // 私有构造函数，仅由 view 的 begin() 调用
+    iterate_view_iterator(T init, F f) : current_(std::move(init)), func_(std::move(f)) {}
+
+public:
+    // 默认构造（singular 状态）
+    iterate_view_iterator() = default;
+
+    // 迭代器基本操作
+    using value_type        = T;
+    using difference_type   = std::ptrdiff_t;
+    using iterator_concept  = std::forward_iterator_tag;
+    using iterator_category = std::forward_iterator_tag;   // C++20 起也使用此别名
+
+    // 解引用
+    const T& operator*() const noexcept { return current_; }
+    const T* operator->() const noexcept { return std::addressof(current_); }
+
+    // 前置递增
+    iterate_view_iterator& operator++() {
+        current_ = func_(current_);   // 应用递推函数
+        return *this;
+    }
+
+    // 后置递增
+    iterate_view_iterator operator++(int) {
+        iterate_view_iterator tmp = *this;
+        ++(*this);
+        return tmp;
+    }
+
+    // 比较相等（均为有效迭代器时比较当前值）
+    friend bool operator==(const iterate_view_iterator& a, const iterate_view_iterator& b) {
+        return a.current_ == b.current_;
+    }
+
+    // 与默认哨兵的比较（对于无限序列，永远不等）
+    // 注意：如果希望有限序列，可以在此处检查终止条件
+    friend bool operator==(const iterate_view_iterator& it, std::default_sentinel_t) {
+        return false;   // 无限序列，永不结束
+    }
+};
+
+// view 类型（继承 view_interface 自动获得 empty/size/data 等接口）
+export template<std::copyable T, std::copyable F>
+    requires std::invocable<F&, const T&>
+class iterate_view : public std::ranges::view_interface<iterate_view<T, F>> {
+    T init_;
+    F func_;
+
+public:
+    using iterator = iterate_view_iterator<T, F>;
+
+    // 构造函数
+    iterate_view() = default;
+    iterate_view(T init, F func) : init_(std::move(init)), func_(std::move(func)) {}
+
+    // 返回迭代器（起始位置）
+    [[nodiscard]] iterator begin() const {
+        // 需要将 init_ 和 func_ 拷贝一份给迭代器
+        return iterator(init_, func_);
+    }
+
+    // 返回哨兵（这里用 std::default_sentinel 表示无限）
+    [[nodiscard]] std::default_sentinel_t end() const noexcept {
+        return std::default_sentinel;
+    }
+};
+
+export template<class T, class F>
+iterate_view<T, std::decay_t<F>> iterate(T init, F&& func) {
+    return iterate_view<T, std::decay_t<F>>(std::move(init), std::forward<F>(func));
+}
+
+}
