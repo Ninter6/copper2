@@ -11,4 +11,5 @@ target_sources(copper2 PRIVATE
     FILE_SET CXX_MODULES
         FILES ${CCM_FILES}
 )
+target_compile_options(copper2 PRIVATE -Og -march=native)
 target_compile_definitions(copper2 PRIVATE FILE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/")

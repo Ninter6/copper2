@@ -1,10 +1,13 @@
 #include <algorithm>
 #include <iostream>
 #include <fstream>
+#include <cassert>
 #include <vector>
 #include <ranges>
 #include <random>
 #include <array>
+
+#include "timer.hh"
 
 import core;
 import image;
@@ -48,27 +51,72 @@ struct Line {
 
     void flip() { std::swap(A, B); }
 
-    int sign_x() const { return A.x > B.x ? -1 : 1; }
-    int sign_y() const { return A.y > B.y ? -1 : 1; }
+    [[nodiscard]] int sign_x() const { return A.x > B.x ? -1 : 1; }
+    [[nodiscard]] int sign_y() const { return A.y > B.y ? -1 : 1; }
 
-    auto view() const {
+    [[nodiscard]] auto view() const {
         return line_view(A.x, A.y, B.x, B.y);
     }
 };
 
-auto line_steps_x_view(const Line& l, int prefer) {
-    constexpr auto always_true = [](auto&&) { return true; };
-    return l.view() | std::views::chunk_by([](auto&& p1, auto&& p2) {
-        return p1.y == p2.y;
-    }) | std::views::transform([=, f = l.sign_x() == prefer](auto&& c) {
-        return f ? c.front() : std::ranges::find_last_if(c,
-            always_true).front();
-    });
+struct step_phase {
+    int x, y;
+    int l, r;
+    int err;
+    int lev;
+    int lp, rp;
+    int dx, dy;
+    int sx, sy;
+};
+
+step_phase line_step_y(step_phase p) {
+    p.y += p.sy;
+    p.x = p.r + p.lp;
+    p.err += p.dx << 1;
+    if (p.err >= p.dy) {
+        p.x += p.sx;
+        p.err -= p.dy << 1;
+    }
+    p.l = p.lp ? p.r + p.sx : p.x;
+    p.r = p.x;
+    if (++p.lev < p.dy)
+        p.r += p.rp;
+    return p;
+}
+
+auto line_step_y_view(const Line& l, int prefer) {
+    step_phase p0{};
+    p0.x = l.A.x; p0.y = l.A.y;
+    p0.dx = std::abs(l.B.x - l.A.x);
+    p0.dy = std::abs(l.B.y - l.A.y);
+    p0.sx = l.A.x > l.B.x ? -1 : 1;
+    p0.sy = l.A.y > l.B.y ? -1 : 1;
+
+    int pad = p0.dx / std::max(p0.dy, 1);
+    p0.dx = p0.dx % std::max(p0.dy, 1);
+    p0.lp = pad ? p0.sx * ((pad >> 1) + 1) : 0;
+    p0.rp = pad ? p0.sx * ((pad - 1) >> 1) : 0;
+
+    p0.l = p0.x;
+    if (!p0.dy)
+        p0.x += p0.lp;
+    p0.r = p0.x + p0.rp;
+
+    return cu::util::iterate(p0, line_step_y)
+        | std::views::take_while([](auto&& p) { return p.lev <= p.dy; })
+        | std::views::transform([=](auto&& p) -> m3::ivec2 {
+            switch (prefer) {
+                case -1: return {p.r, p.y}; // last
+                case  1: return {p.l, p.y}; // first
+                case  0: return {p.x, p.y}; // mid
+                default: assert(false);
+            }
+        });
 }
 
 auto trapezoid_view(const Line& l, const Line& r) {
-    auto le = line_steps_x_view(l, 1);
-    auto re = line_steps_x_view(r,-1);
+    auto le = line_step_y_view(l, l.sign_x());
+    auto re = line_step_y_view(r,-l.sign_x());
     return std::views::zip(le, re);
 }
 
@@ -80,25 +128,23 @@ struct Trapezoid {
     }
 
     void check_lr_and_swap() {
-        if (L.A.x > R.A.x)
-            std::swap(L, R);
-        else if (L.B.x > R.B.x)
+        if (L.A.x > R.A.x || L.B.x > R.B.x)
             std::swap(L, R);
     }
 
-    auto view() const {
+    [[nodiscard]] auto view() const {
         return trapezoid_view(L, R);
     }
 };
 
-auto scanline_view(const Trapezoid& trap) {
-    return trap.view() | std::views::transform([](auto&& a) {
-        auto&& [f, l] = a;
-        return std::views::iota(f.x, l.x + 1)
-            | std::views::transform([y=f.y](auto&& x) {
-                return m3::ivec2{x, y};
-            });
-    });
+void draw_horiz_line(cu::ImageRGB& img, int fx, int lx, int y, const m3::vec3& col) {
+    for (int x : std::views::iota(fx, lx + 1))
+        img.set_or_ignore(x, y, col);
+}
+
+void draw_trapezoid(cu::ImageRGB& img, const Trapezoid& t, const m3::vec3& col) {
+    for (auto&& [l, r] : t.view())
+        draw_horiz_line(img, l.x, r.x, l.y, col);
 }
 
 void draw_triangle(cu::ImageRGB& img, std::array<m3::ivec2, 3> va, const m3::vec3& col) {
@@ -107,11 +153,9 @@ void draw_triangle(cu::ImageRGB& img, std::array<m3::ivec2, 3> va, const m3::vec
     });
 
     if (va[0].y == va[2].y) {
-        auto [mn, mx] = std::ranges::minmax_element(va, [](auto&& a, auto&& b) {
-            return a.x < b.x;
-        });
-        for (int x : std::views::iota(mn->x, mx->x +1))
-            img[x, va[0].y] = col;
+        auto [mn, mx] = std::ranges::minmax_element(va,
+            [](auto&& a, auto&& b) { return a.x < b.x; });
+        draw_horiz_line(img, mn->x, mx->x, va[0].y, col);
         return;
     }
 
@@ -120,8 +164,7 @@ void draw_triangle(cu::ImageRGB& img, std::array<m3::ivec2, 3> va, const m3::vec
             {va[0], va[2]},
             {va[1], va[2]}
         };
-        for (auto&& v : scanline_view(trap) | std::views::join)
-            img[v.x, v.y] = col;
+        draw_trapezoid(img, trap, col);
         return;
     }
     if (va[1].y == va[2].y) {
@@ -129,8 +172,7 @@ void draw_triangle(cu::ImageRGB& img, std::array<m3::ivec2, 3> va, const m3::vec
                 {va[0], va[1]},
                 {va[0], va[2]}
         };
-        for (auto&& v : scanline_view(trap) | std::views::join)
-            img[v.x, v.y] = col;
+        draw_trapezoid(img, trap, col);
         return;
     }
 
@@ -147,16 +189,13 @@ void draw_triangle(cu::ImageRGB& img, std::array<m3::ivec2, 3> va, const m3::vec
         {M, va[2]},
         {va[1], va[2]}
     };
-    for (auto&& v : scanline_view(t1) | std::views::join)
-        img[v.x, v.y] = col;
-    for (auto&& v : scanline_view(t2) | std::views::join)
-        img[v.x, v.y] = col;
+    draw_trapezoid(img, t1, col);
+    draw_trapezoid(img, t2, col);
 }
 
 void draw_line(cu::ImageRGB& img, int fx, int fy, int lx, int ly, const m3::vec3& col) {
     if (fy == ly)
-        for (int x : std::views::iota(fx, lx + 1))
-            img.set_or_ignore(x, fy, col);
+        draw_horiz_line(img, fx, lx, fy, col);
     else
         for (auto&& p : line_view(fx, fy, lx, ly))
             img.set_or_ignore(p.x, p.y, col);
@@ -189,10 +228,10 @@ void draw_circle_line(cu::ImageRGB& img, int cx, int cy, int r, const m3::vec3& 
 
 void draw_circle(cu::ImageRGB& img, int cx, int cy, int r, const m3::vec3& col) {
     int dx = 0, dy = r, e = 0;
-    do {draw_line(img, cx-dx, cy-dy, cx+dx, cy-dy, col);
-        draw_line(img, cx-dy, cy-dx, cx+dy, cy-dx, col);
-        draw_line(img, cx-dy, cy+dx, cx+dy, cy+dx, col);
-        draw_line(img, cx-dx, cy+dy, cx+dx, cy+dy, col);
+    do {draw_horiz_line(img, cx-dx, cx+dx, cy-dy, col);
+        draw_horiz_line(img, cx-dy, cx+dy, cy-dx, col);
+        draw_horiz_line(img, cx-dy, cx+dy, cy+dx, col);
+        draw_horiz_line(img, cx-dx, cx+dx, cy+dy, col);
         e -= (e += ++dx<<1) > dy ? dy--<<1 : 1;
     } while (dx <= dy);
 }
@@ -200,16 +239,15 @@ void draw_circle(cu::ImageRGB& img, int cx, int cy, int r, const m3::vec3& col) 
 int main() {
     std::cout << "Hello, World!" << std::endl;
 
-    cu::ImageRGB img{50, 50};
+    cu::ImageRGB img{500, 500};
+    img.fill(m3::vec3{.67f});
 
-    for (auto&& [p, x, y] : img.view() | std::views::filter([](auto&& a) {
-        auto&& [_, x, y] = a;
-        return std::abs((int)(x - y)) > 30;
-    })) {
-        p = {0, (float)x / img.width, (float)y / img.height};
-    }
+    // for (auto&& [p, x, y] : img.view()) {
+    //     if (std::abs((int)(x - y)) > 30)
+    //         p = {0, (float)x / img.width, (float)y / img.height};
+    // }
 
-    draw_circle_line(img, 25, 25, 15, {1, 0, 0});
+    // draw_circle_line(img, 25, 25, 15, {1, 0, 0});
 
     // for (auto&& [p, x, y] : img.view() | std::views::filter([](auto&& a) {
     //     auto&& [_, x, y] = a;
@@ -218,28 +256,29 @@ int main() {
     //     p = {0, 0, 1};
     // }
 
-    // Line l{{10, 10}, {30, 25}};
-    // Line r{{30, 10}, {30, 25}};
-    //
-    // Trapezoid trap{l, r};
-    //
-    // for (auto&& [x, y] : scanline_view(trap) | std::views::join) {
-    //     img[x, y] = {0, 1 ,0};
-    // }
+    std::array<m3::ivec2, 3> va;
 
-    // std::array<m3::ivec2, 3> va;
-    //
+    va[0] = {10, 10};
+    va[1] = {10, 490};
+    va[2] = {490, 250};
     // std::mt19937 e{std::random_device{}()};
     // std::ranges::generate(va, [&] {
     //     return m3::ivec2(m3::rand_unit_vec2(e) * 250 + 250);
     // });
-    //
-    // draw_triangle(img, va, {1, 0, 0});
-    //
-    // for (auto&& p : va)
-    //     draw_circle(img, p.x, p.y, 5, {0, 1, 0});
 
+    TICK();
+    draw_triangle(img, va, {1, 0, 0});
+
+    for (auto&& p : va)
+        draw_circle(img, p.x, p.y, 5, {0, 1, 0});
+    TOCK();
+
+    cu::Canvas can{&img, 0, 200, 500, 100};
+    can.flip_x();
+
+    TICK();
     cu::export_ppm(img, FILE_ROOT"img.ppm");
+    TOCK();
 
     return 0;
 }
